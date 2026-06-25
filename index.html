@@ -80,12 +80,8 @@ header h1 { font-size: 18px; }
 .cal-grid { display:grid; grid-template-columns:repeat(7,1fr); gap:2px; }
 .cal-hd { text-align:center; font-size:11px; font-weight:bold; padding:4px; color:#888; }
 .cal-hd.sun { color:#d9534f; } .cal-hd.sat { color:#4a90d9; }
-
-/* ★ カレンダーマス目：高さ固定・オーバーフロー非表示 */
 .cal-cell {
-  height: 72px;            /* 固定高さ */
-  overflow: hidden;        /* はみ出し非表示 */
-  background:#fff; border-radius:6px; padding:3px;
+  height:72px; overflow:hidden; background:#fff; border-radius:6px; padding:3px;
   border:1px solid var(--border); cursor:pointer; transition:background .15s;
   display:flex; flex-direction:column;
 }
@@ -96,20 +92,13 @@ header h1 { font-size: 18px; }
 .cal-cell.today.hastask { background:#e0ebff; }
 .cal-dn { font-size:11px; font-weight:bold; text-align:right; padding:1px 2px; flex-shrink:0; }
 .cal-dn.sun { color:#d9534f; } .cal-dn.sat { color:#4a90d9; }
-/* ★ ドット部分：残りスペースに収める */
 .cal-dots { flex:1; overflow:hidden; min-height:0; }
-.cal-dot {
-  font-size:10px; line-height:1.4;
-  overflow:hidden; white-space:nowrap; text-overflow:ellipsis;
-  border-radius:3px; padding:0 2px; margin-bottom:1px;
-}
+.cal-dot { font-size:10px; line-height:1.4; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; border-radius:3px; padding:0 2px; margin-bottom:1px; }
 .cal-dot.overdue { background:#fde8e8; color:#c0392b; }
 .cal-dot.soon    { background:#fef8e0; color:#b7770d; }
 .cal-dot.normal  { background:#e8f0fe; color:#1a56b0; }
 .cal-dot.done    { background:#e8f8e8; color:#2e7d32; }
-/* ★ 「+n件」表示 */
 .cal-more { font-size:10px; color:#aaa; flex-shrink:0; padding:0 2px; }
-
 .mitem { display:flex; align-items:center; gap:8px; padding:7px 0; border-bottom:1px solid var(--border); }
 .mitem:last-child { border-bottom:none; }
 .mitem-name { flex:1; }
@@ -337,7 +326,7 @@ import { initializeApp }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut as fbSignOut, onAuthStateChanged }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
-import { getDatabase, ref, set, onValue, off, serverTimestamp }
+import { getDatabase, ref, set, onValue, off }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js';
 
 // ================================================================
@@ -357,12 +346,9 @@ var app      = initializeApp(firebaseConfig);
 var auth     = getAuth(app);
 var database = getDatabase(app);
 
-var currentUser   = null;
-var dbListenerRef = null;
-var saveTimer     = null;
-
-// ★ 自分が書き込んだデータのバージョンID
-// Firebaseから受信した際、このIDと一致すれば「自分の書き込み」と判断して画面更新をスキップ
+var currentUser    = null;
+var dbListenerRef  = null;
+var saveTimer      = null;
 var myWriteVersion = null;
 
 // ================================================================
@@ -410,7 +396,6 @@ onAuthStateChanged(auth, function(user) {
 
 // ================================================================
 // Firebase同期
-// ★ 修正ポイント：バージョンIDで自分の書き込みを識別
 // ================================================================
 function getUserRef() {
   return ref(database, 'users/' + currentUser.uid);
@@ -425,7 +410,6 @@ function startSync() {
     var data = snapshot.val();
 
     if (!data) {
-      // 初回ログイン：デフォルト値をセットして書き込む
       tasks     = [];
       doneTasks = [];
       masters   = getDefaultMasters();
@@ -435,30 +419,26 @@ function startSync() {
       return;
     }
 
-    // ★ 受信データのバージョンが自分の最新書き込みと同じなら画面更新のみ行い
-    //    データの上書きはしない（自分の操作結果をFirebaseが返してきただけなので）
+    // 自分の書き込みへの折り返しはデータ更新せず同期済みにするだけ
     if (data._ver && data._ver === myWriteVersion) {
       setSyncStatus('ok');
       return;
     }
 
-    // 別端末からの更新 or 初回受信 → データをすべて反映
+    // 別端末からの更新または初回受信
     tasks     = Array.isArray(data.tasks)   ? data.tasks   : [];
     doneTasks = Array.isArray(data.done)    ? data.done    : [];
     masters   = Array.isArray(data.masters) ? data.masters : getDefaultMasters();
     settings  = data.settings || { sortKey:'deadline', manualOrder:[] };
     if (!Array.isArray(settings.manualOrder)) settings.manualOrder = [];
 
-    // _nextDeadlineをメモリ上で復元（DBには保存しない揮発性データ）
+    // _nextDeadlineをメモリ上で復元
     var yesterday = toDateStr(new Date(new Date() - 86400000));
     tasks.forEach(function(t) {
       if (isRepeat(t)) t._nextDeadline = calcNext(t, yesterday);
     });
 
-    checkAutoDel(false); // 自動削除チェック（保存なし）
-    checkReset();        // 繰り返しリセット（保存なし）
-
-    // 自動削除やリセットで変化があった場合のみ書き込む
+    // 自動削除・繰り返しリセットで変化があればFirebaseに書き戻す
     var needSave = checkAutoDelAndReset();
     if (needSave) {
       writeToFirebase();
@@ -467,7 +447,6 @@ function startSync() {
     }
 
     renderAll();
-
   }, function(e) {
     console.error('Firebase read error:', e);
     setSyncStatus('offline');
@@ -484,10 +463,26 @@ function save() {
   saveTimer = setTimeout(writeToFirebase, 300);
 }
 
+// undefinedを再帰的に除去（FirebaseはundefinedをNGとするため）
+function stripUndefined(obj) {
+  if (Array.isArray(obj)) {
+    return obj.map(stripUndefined);
+  }
+  if (obj !== null && typeof obj === 'object') {
+    var result = {};
+    Object.keys(obj).forEach(function(k) {
+      if (obj[k] !== undefined) {
+        result[k] = stripUndefined(obj[k]);
+      }
+    });
+    return result;
+  }
+  return obj;
+}
+
 function writeToFirebase() {
   if (!currentUser) return;
 
-  // ★ ユニークなバージョンIDを生成して書き込みデータに付与
   var ver = genId();
   myWriteVersion = ver;
 
@@ -497,31 +492,41 @@ function writeToFirebase() {
     return c;
   });
 
-  set(getUserRef(), {
+  var data = stripUndefined({
     tasks:     cleanTasks,
     done:      doneTasks,
     masters:   masters,
     settings:  settings,
     updatedAt: new Date().toISOString(),
-    _ver:      ver,   // ★ バージョンID
-  }).then(function() {
-    setSyncStatus('ok');
-  }).catch(function(e) {
-    console.error('write error:', e);
-    setSyncStatus('offline');
-    myWriteVersion = null; // 失敗したらリセット
+    _ver:      ver,
   });
+
+  set(getUserRef(), data)
+    .then(function() { setSyncStatus('ok'); })
+    .catch(function(e) {
+      console.error('write error:', e);
+      setSyncStatus('offline');
+      myWriteVersion = null;
+    });
+}
+
+function setSyncStatus(state) {
+  var el = document.getElementById('syncStatus');
+  if      (state==='ok')      { el.className='sync-status sync-ok';      el.textContent='● 同期済み'; }
+  else if (state==='pending') { el.className='sync-status sync-pending'; el.textContent='● 同期中...'; }
+  else                        { el.className='sync-status sync-offline';  el.textContent='● オフライン'; }
 }
 
 // ================================================================
-// 自動削除＋繰り返しリセットを一括実行し、変化があったかを返す
+// 自動削除＋繰り返しリセット（変化があったかをboolで返す）
 // ================================================================
 function checkAutoDelAndReset() {
-  var prevDoneLen = doneTasks.length;
-  var prevTasksStr = JSON.stringify(tasks.map(function(t){ return t._nextDeadline||''; }));
+  var now      = new Date();
+  var today    = todayStr();
+  var prevDone = doneTasks.length;
+  var prevNextDeadlines = tasks.map(function(t){ return t._nextDeadline||''; }).join(',');
 
   // 自動削除
-  var now = new Date();
   doneTasks = doneTasks.filter(function(e) {
     var master = getMasterByTitle(e.title);
     var days   = master.autoDeleteDays || 0;
@@ -530,7 +535,6 @@ function checkAutoDelAndReset() {
   });
 
   // 繰り返しリセット
-  var today = todayStr();
   doneTasks = doneTasks.filter(function(e) {
     if (!e.isRepeat) return true;
     if (e.deadline && e.deadline < today) {
@@ -541,41 +545,8 @@ function checkAutoDelAndReset() {
     return true;
   });
 
-  var afterTasksStr = JSON.stringify(tasks.map(function(t){ return t._nextDeadline||''; }));
-  return doneTasks.length !== prevDoneLen || prevTasksStr !== afterTasksStr;
-}
-
-// 旧関数（save()を呼ばない版。startSync内で使用）
-function checkAutoDel(doSave) {
-  var now = new Date();
-  var prev = doneTasks.length;
-  doneTasks = doneTasks.filter(function(e) {
-    var master = getMasterByTitle(e.title);
-    var days   = master.autoDeleteDays || 0;
-    if (!days || !e.completedAt) return true;
-    return (now - new Date(e.completedAt)) / 86400000 < days;
-  });
-  if (doSave && doneTasks.length !== prev) save();
-}
-
-function checkReset() {
-  var today = todayStr();
-  doneTasks = doneTasks.filter(function(e) {
-    if (!e.isRepeat) return true;
-    if (e.deadline && e.deadline < today) {
-      var orig = tasks.find(function(t){ return t.id === e.taskId; });
-      if (orig) orig._nextDeadline = calcNext(orig, e.deadline);
-      return false;
-    }
-    return true;
-  });
-}
-
-function setSyncStatus(state) {
-  var el = document.getElementById('syncStatus');
-  if      (state==='ok')      { el.className='sync-status sync-ok';      el.textContent='● 同期済み'; }
-  else if (state==='pending') { el.className='sync-status sync-pending'; el.textContent='● 同期中...'; }
-  else                        { el.className='sync-status sync-offline';  el.textContent='● オフライン'; }
+  var afterNextDeadlines = tasks.map(function(t){ return t._nextDeadline||''; }).join(',');
+  return doneTasks.length !== prevDone || prevNextDeadlines !== afterNextDeadlines;
 }
 
 // ================================================================
@@ -595,14 +566,15 @@ function deadlineDiff(dateStr, deadlineTime) {
   var now=new Date(), cutH=0, cutM=0;
   if(deadlineTime){ var p=deadlineTime.split(':'); cutH=+p[0]; cutM=+p[1]; }
   var dlDate=parseDate(dateStr); if(!dlDate) return null;
-  var dlMs=new Date(dlDate.getFullYear(),dlDate.getMonth(),dlDate.getDate(),cutH,cutM,0).getTime();
-  return dlMs - now.getTime();
+  return new Date(dlDate.getFullYear(),dlDate.getMonth(),dlDate.getDate(),cutH,cutM,0).getTime() - now.getTime();
 }
 
 function fmtDiff(ms) {
   if(ms===null) return '';
-  if(ms<0){ var abs=Math.abs(ms), d=Math.floor(abs/86400000), hh=Math.floor((abs%86400000)/3600000);
-    return d>0?d+'日'+hh+'時間超過':hh+'時間超過'; }
+  if(ms<0){
+    var abs=Math.abs(ms), d=Math.floor(abs/86400000), hh=Math.floor((abs%86400000)/3600000);
+    return d>0 ? d+'日'+hh+'時間超過' : hh+'時間超過';
+  }
   var d=Math.floor(ms/86400000), hh=Math.floor((ms%86400000)/3600000);
   if(d>0) return 'あと'+d+'日'+hh+'時間';
   if(hh>0) return 'あと'+hh+'時間';
@@ -610,11 +582,12 @@ function fmtDiff(ms) {
 }
 
 function fmtDate(ds) {
-  if(!ds) return ''; var d=parseDate(ds), dow=['日','月','火','水','木','金','土'][d.getDay()];
+  if(!ds) return '';
+  var d=parseDate(ds), dow=['日','月','火','水','木','金','土'][d.getDay()];
   return (d.getMonth()+1)+'/'+d.getDate()+'（'+dow+'）';
 }
 
-var WD=['日','月','火','水','木','金','土'];
+var WD = ['日','月','火','水','木','金','土'];
 
 function h(s) {
   return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
@@ -639,15 +612,15 @@ function isRepeat(t) {
   return ['weekday','monthday','interval','weeks'].indexOf(t.dlType) !== -1;
 }
 
-function nextWeekday(base,targetDow) {
+function nextWeekday(base, targetDow) {
   var d=parseDate(base); d.setDate(d.getDate()+1);
   while(d.getDay()!==targetDow) d.setDate(d.getDate()+1);
   return toDateStr(d);
 }
-function nextMonthday(base,dayNum) {
+function nextMonthday(base, dayNum) {
   var d=parseDate(base); d.setDate(d.getDate()+1);
   for(var i=0;i<14;i++){
-    var y=d.getFullYear(),mo=d.getMonth(),target;
+    var y=d.getFullYear(), mo=d.getMonth(), target;
     if(dayNum===0){ target=new Date(y,mo+1,0); }
     else{ var last=new Date(y,mo+1,0).getDate(); target=new Date(y,mo,Math.min(dayNum,last)); }
     if(toDateStr(target)>=toDateStr(d)) return toDateStr(target);
@@ -655,7 +628,7 @@ function nextMonthday(base,dayNum) {
   }
   return null;
 }
-function nextInterval(base,startStr,interval) {
+function nextInterval(base, startStr, interval) {
   var start=parseDate(startStr), b=parseDate(base);
   var diff=Math.ceil((b-start)/86400000);
   if(diff<0) return toDateStr(start);
@@ -664,11 +637,11 @@ function nextInterval(base,startStr,interval) {
   return toDateStr(next);
 }
 
-function calcNext(t,base) {
-  if(t.dlType==='weekday')  return nextWeekday(base,t.dlWeekday);
-  if(t.dlType==='monthday') return nextMonthday(base,t.dlMonthday);
-  if(t.dlType==='interval') return nextInterval(base,t.dlStart,t.dlInterval);
-  if(t.dlType==='weeks')    return nextInterval(base,t.dlStart,(t.dlWeeks||1)*7);
+function calcNext(t, base) {
+  if(t.dlType==='weekday')  return nextWeekday(base, t.dlWeekday);
+  if(t.dlType==='monthday') return nextMonthday(base, t.dlMonthday);
+  if(t.dlType==='interval') return nextInterval(base, t.dlStart, t.dlInterval);
+  if(t.dlType==='weeks')    return nextInterval(base, t.dlStart, (t.dlWeeks||1)*7);
   return null;
 }
 
@@ -740,7 +713,7 @@ function restoreDlInputs(t) {
 // ================================================================
 // タスクモーダル
 // ================================================================
-function buildTitleSelect(sel,val) {
+function buildTitleSelect(sel, val) {
   sel.innerHTML='';
   var b=document.createElement('option'); b.value=''; b.textContent='-- 選択してください --'; sel.appendChild(b);
   masters.forEach(function(m){
@@ -802,7 +775,9 @@ function saveTask() {
     dlData.dlWeeks=v;
     dlData.dlStart=document.getElementById('dl_start').value||todayStr();
   }
+
   var yesterday=toDateStr(new Date(new Date()-86400000));
+
   if(editingId){
     var idx=tasks.findIndex(function(t){return t.id===editingId;});
     if(idx===-1){alert('タスクが見つかりません');return;}
@@ -813,8 +788,10 @@ function saveTask() {
     base._nextDeadline=isRepeat(base)?calcNext(base,yesterday):null;
     tasks[idx]=base;
   }else{
-    var nt=Object.assign({id:genId(),title:title,event:event,memo:memo,dlType:dlType,
-      createdAt:new Date().toISOString(),_nextDeadline:null},dlData);
+    var nt=Object.assign({
+      id:genId(),title:title,event:event,memo:memo,
+      dlType:dlType,createdAt:new Date().toISOString(),_nextDeadline:null
+    },dlData);
     if(isRepeat(nt)) nt._nextDeadline=calcNext(nt,yesterday);
     tasks.push(nt);
     settings.manualOrder.push(nt.id);
@@ -838,14 +815,28 @@ window.deleteTask = function(id) {
 window.completeTask = function(id) {
   var t=tasks.find(function(x){return x.id===id;}); if(!t) return;
   var dl=getDeadline(t);
-  doneTasks.push({
-    id:genId(), taskId:id, title:t.title, event:t.event||'', memo:t.memo||'',
-    dlType:t.dlType, deadline:dl, completedAt:new Date().toISOString(),
-    isRepeat:isRepeat(t),
-    _orig:Object.assign({},t,{_nextDeadline:undefined}),
+
+  // _origから_nextDeadlineを除いて保存（undefinedにせずプロパティ自体を含めない）
+  var origCopy = {};
+  Object.keys(t).forEach(function(k){
+    if(k !== '_nextDeadline' && t[k] !== undefined) origCopy[k] = t[k];
   });
+
+  doneTasks.push(stripUndefined({
+    id:          genId(),
+    taskId:      id,
+    title:       t.title,
+    event:       t.event  || '',
+    memo:        t.memo   || '',
+    dlType:      t.dlType,
+    deadline:    dl,
+    completedAt: new Date().toISOString(),
+    isRepeat:    isRepeat(t),
+    _orig:       origCopy,
+  }));
+
   if(isRepeat(t)){
-    t._nextDeadline=calcNext(t,dl||todayStr());
+    t._nextDeadline=calcNext(t, dl||todayStr());
   }else{
     tasks=tasks.filter(function(x){return x.id!==id;});
     settings.manualOrder=settings.manualOrder.filter(function(i){return i!==id;});
@@ -864,10 +855,12 @@ window.uncomplete = function(doneId) {
     }
   }else{
     var r=e._orig
-      ?Object.assign({},e._orig,{_nextDeadline:e.deadline})
-      :{id:e.taskId,title:e.title,event:e.event,memo:e.memo,dlType:e.dlType||'date',
-        dlDate:e.deadline,_nextDeadline:e.deadline,createdAt:e.completedAt};
-    tasks.push(r); settings.manualOrder.push(r.id);
+      ? Object.assign({},e._orig,{_nextDeadline:e.deadline})
+      : {id:e.taskId,title:e.title,event:e.event,memo:e.memo,
+         dlType:e.dlType||'date',dlDate:e.deadline,
+         _nextDeadline:e.deadline,createdAt:e.completedAt};
+    tasks.push(r);
+    settings.manualOrder.push(r.id);
   }
   save(); renderTasks(); renderDone();
 };
@@ -890,7 +883,8 @@ function getFilteredSortedTasks() {
     if(fTitle  &&t.title!==fTitle)         return false;
     if(fRepeat==='once'   && isRepeat(t))  return false;
     if(fRepeat==='repeat' && !isRepeat(t)) return false;
-    if(fText&&!t.title.toLowerCase().includes(fText)&&!(t.event||'').toLowerCase().includes(fText)) return false;
+    if(fText&&!t.title.toLowerCase().includes(fText)
+            &&!(t.event||'').toLowerCase().includes(fText)) return false;
     return true;
   });
   if(sortKey==='deadline')     list.sort(function(a,b){return(getDeadline(a)||'9999-99-99').localeCompare(getDeadline(b)||'9999-99-99');});
@@ -978,7 +972,7 @@ function renderDone() {
 }
 
 // ================================================================
-// カレンダー（★ マス目固定サイズ対応）
+// カレンダー
 // ================================================================
 function renderCalendar() {
   var now=new Date();
@@ -987,7 +981,6 @@ function renderCalendar() {
   document.getElementById('calLabel').textContent=calYear+'年'+(calMonth+1)+'月';
 
   var today=todayStr(), first=new Date(calYear,calMonth,1), last=new Date(calYear,calMonth+1,0), sdow=first.getDay();
-
   var html=WD.map(function(d,i){
     return '<div class="cal-hd'+(i===0?' sun':i===6?' sat':'')+'">' +d+'</div>';
   }).join('');
@@ -1000,26 +993,18 @@ function renderCalendar() {
     var dow  = new Date(calYear,calMonth,d).getDay();
     var dts  = getTasksForDate(ds);
     var dnCls= dow===0?'sun':dow===6?'sat':'';
-
-    // ★ ドット部分を構築（表示数は計算で決めずCSSのoverflow:hiddenに任せる）
-    //    ただし「+n件」表示のために件数は把握しておく
-    // カレンダーセルの高さ72px、日付行約16px、1ドット約15px
-    // → 最大表示可能件数 = floor((72-16)/15) = 3件
-    var MAX_DOTS = 3;
+    var MAX_DOTS    = 3;
     var visibleDts  = dts.slice(0, MAX_DOTS);
     var remainCount = dts.length - MAX_DOTS;
 
     var dotsHtml = visibleDts.map(function(t){
       var diffMs = t._done ? 0 : deadlineDiff(ds, getMasterByTitle(t.title).deadlineTime);
       var cls    = t._done?'done':diffMs===null?'normal':diffMs<0?'overdue':diffMs<86400000?'soon':'normal';
-      // 「タイトル　イベント名」形式（text-overflow:ellipsisでCSSが切り詰める）
       var label  = t.title + (t.event ? '\u3000' + t.event : '');
       return '<div class="cal-dot '+cls+'">'+h(label)+'</div>';
     }).join('');
 
-    var moreHtml = remainCount > 0
-      ? '<div class="cal-more">…+'+remainCount+'件</div>'
-      : '';
+    var moreHtml = remainCount > 0 ? '<div class="cal-more">…+'+remainCount+'件</div>' : '';
 
     html += '<div class="cal-cell'+(isTd?' today':'')+(dts.length?' hastask':'')+'" onclick="showCalDay(\''+ds+'\')">'
       +'<div class="cal-dn '+dnCls+'">'+d+'</div>'
@@ -1069,7 +1054,10 @@ window.openMasterModal = function() { renderMasterList(); openModal('masterModal
 
 function renderMasterList() {
   var el=document.getElementById('masterListEl'); el.innerHTML='';
-  if(masters.length===0){el.innerHTML='<div style="color:#aaa;text-align:center;padding:16px">マスタがありません</div>';return;}
+  if(masters.length===0){
+    el.innerHTML='<div style="color:#aaa;text-align:center;padding:16px">マスタがありません</div>';
+    return;
+  }
   masters.forEach(function(m,i){
     var div=document.createElement('div'); div.className='mitem';
     var info=document.createElement('div'); info.className='mitem-name';
@@ -1143,9 +1131,11 @@ window.openIEModal = function() {
   document.getElementById('importBox').value='';
   openModal('ieModal');
 };
+
 window.doExport = function() {
   var data={_at:new Date().toISOString(),_v:'4.0'};
-  if(document.getElementById('chkTasks').checked)    data.tasks=tasks.map(function(t){var c=Object.assign({},t);delete c._nextDeadline;return c;});
+  if(document.getElementById('chkTasks').checked)
+    data.tasks=tasks.map(function(t){var c=Object.assign({},t);delete c._nextDeadline;return c;});
   if(document.getElementById('chkDone').checked)     data.done=doneTasks;
   if(document.getElementById('chkMasters').checked)  data.masters=masters;
   if(document.getElementById('chkSettings').checked) data.settings=settings;
@@ -1153,22 +1143,26 @@ window.doExport = function() {
   document.getElementById('exportSection').style.display='block';
   document.getElementById('importSection').style.display='none';
 };
+
 window.copyExport = function() {
   var box=document.getElementById('exportBox');
-  if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(box.value).then(function(){alert('コピーしました');});}
-  else{box.select();document.execCommand('copy');alert('コピーしました');}
+  if(navigator.clipboard&&navigator.clipboard.writeText){
+    navigator.clipboard.writeText(box.value).then(function(){alert('コピーしました');});
+  }else{box.select();document.execCommand('copy');alert('コピーしました');}
 };
+
 window.showImport = function() {
   document.getElementById('importSection').style.display='block';
   document.getElementById('exportSection').style.display='none';
 };
+
 window.doImport = function() {
   var text=document.getElementById('importBox').value.trim();
   if(!text){alert('データを貼り付けてください');return;}
   var data; try{data=JSON.parse(text);}catch(e){alert('JSONが不正です');return;}
   var mode=document.getElementById('importMode').value;
-  var ct=document.getElementById('chkTasks').checked, cd=document.getElementById('chkDone').checked;
-  var cm=document.getElementById('chkMasters').checked, cs=document.getElementById('chkSettings').checked;
+  var ct=document.getElementById('chkTasks').checked,    cd=document.getElementById('chkDone').checked;
+  var cm=document.getElementById('chkMasters').checked,  cs=document.getElementById('chkSettings').checked;
   if(mode==='overwrite'){
     if(!confirm('上書きします。よろしいですか？'))return;
     if(ct&&data.tasks)    tasks=data.tasks;
@@ -1176,8 +1170,14 @@ window.doImport = function() {
     if(cm&&data.masters)  masters=data.masters;
     if(cs&&data.settings) settings=data.settings;
   }else{
-    if(ct&&data.tasks){var e=new Set(tasks.map(function(t){return t.id;}));data.tasks.forEach(function(t){if(!e.has(t.id))tasks.push(t);});}
-    if(cd&&data.done){var e=new Set(doneTasks.map(function(c){return c.id;}));data.done.forEach(function(c){if(!e.has(c.id))doneTasks.push(c);});}
+    if(ct&&data.tasks){
+      var e=new Set(tasks.map(function(t){return t.id;}));
+      data.tasks.forEach(function(t){if(!e.has(t.id))tasks.push(t);});
+    }
+    if(cd&&data.done){
+      var e=new Set(doneTasks.map(function(c){return c.id;}));
+      data.done.forEach(function(c){if(!e.has(c.id))doneTasks.push(c);});
+    }
     if(cm&&data.masters){
       data.masters.forEach(function(m){
         var entry=typeof m==='string'?{name:m,deadlineTime:'04:00',autoDeleteDays:0}:m;
@@ -1200,14 +1200,20 @@ window.doImport = function() {
 // ================================================================
 window.switchTab = function(tab) {
   currentTab=tab;
-  document.querySelectorAll('.tab').forEach(function(el,i){el.classList.toggle('active',['task','cal','done'][i]===tab);});
+  document.querySelectorAll('.tab').forEach(function(el,i){
+    el.classList.toggle('active',['task','cal','done'][i]===tab);
+  });
   document.getElementById('page-task').classList.toggle('show',tab==='task');
   document.getElementById('page-cal').classList.toggle('show', tab==='cal');
   document.getElementById('page-done').classList.toggle('show',tab==='done');
   if(tab==='cal')  renderCalendar();
   if(tab==='done') renderDone();
 };
-window.onSortChange = function() { settings.sortKey=document.getElementById('fSort').value; save(); renderTasks(); };
+
+window.onSortChange = function() {
+  settings.sortKey=document.getElementById('fSort').value;
+  save(); renderTasks();
+};
 
 function openModal(id)  { document.getElementById(id).classList.add('show'); }
 function closeModal(id) { document.getElementById(id).classList.remove('show'); }
@@ -1219,13 +1225,17 @@ document.querySelectorAll('.overlay').forEach(function(el){
 
 function renderAll() {
   document.getElementById('fSort').value=settings.sortKey||'deadline';
-  rebuildTitleFilter(); renderTasks();
+  rebuildTitleFilter();
+  renderTasks();
   if(currentTab==='done') renderDone();
   if(currentTab==='cal')  renderCalendar();
 }
 
-// 1時間毎に自動削除チェック（変化があれば保存）
-setInterval(function(){ checkAutoDel(true); }, 3600000);
+// 1時間毎に自動削除・リセットチェック
+setInterval(function(){
+  var changed = checkAutoDelAndReset();
+  if(changed){ writeToFirebase(); renderAll(); }
+}, 3600000);
 
 </script>
 </body>
