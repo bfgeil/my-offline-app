@@ -419,7 +419,7 @@ function startSync() {
       return;
     }
 
-    // 自分の書き込みへの折り返しはデータ更新せず同期済みにするだけ
+    // 自分の書き込みへの折り返しはスキップ
     if (data._ver && data._ver === myWriteVersion) {
       setSyncStatus('ok');
       return;
@@ -433,9 +433,14 @@ function startSync() {
     if (!Array.isArray(settings.manualOrder)) settings.manualOrder = [];
 
     // _nextDeadlineをメモリ上で復元
-    var yesterday = toDateStr(new Date(new Date() - 86400000));
+    // _completedUntil がある場合はそれを基準に計算
     tasks.forEach(function(t) {
-      if (isRepeat(t)) t._nextDeadline = calcNext(t, yesterday);
+      if (isRepeat(t)) {
+        var base = t._completedUntil
+          ? t._completedUntil
+          : toDateStr(new Date(new Date() - 86400000));
+        t._nextDeadline = calcNext(t, base);
+      }
     });
 
     // 自動削除・繰り返しリセットで変化があればFirebaseに書き戻す
@@ -463,7 +468,7 @@ function save() {
   saveTimer = setTimeout(writeToFirebase, 300);
 }
 
-// undefinedを再帰的に除去（FirebaseはundefinedをNGとするため）
+// undefinedを再帰的に除去
 function stripUndefined(obj) {
   if (Array.isArray(obj)) {
     return obj.map(stripUndefined);
@@ -486,6 +491,7 @@ function writeToFirebase() {
   var ver = genId();
   myWriteVersion = ver;
 
+  // _nextDeadlineのみ除去。_completedUntilはDBに保存する
   var cleanTasks = tasks.map(function(t) {
     var c = Object.assign({}, t);
     delete c._nextDeadline;
@@ -521,10 +527,10 @@ function setSyncStatus(state) {
 // 自動削除＋繰り返しリセット（変化があったかをboolで返す）
 // ================================================================
 function checkAutoDelAndReset() {
-  var now      = new Date();
-  var today    = todayStr();
-  var prevDone = doneTasks.length;
-  var prevNextDeadlines = tasks.map(function(t){ return t._nextDeadline||''; }).join(',');
+  var now   = new Date();
+  var today = todayStr();
+  var prevDoneLen      = doneTasks.length;
+  var prevCompletedUntil = tasks.map(function(t){ return t._completedUntil||''; }).join(',');
 
   // 自動削除
   doneTasks = doneTasks.filter(function(e) {
@@ -534,19 +540,22 @@ function checkAutoDelAndReset() {
     return (now - new Date(e.completedAt)) / 86400000 < days;
   });
 
-  // 繰り返しリセット
+  // 繰り返しリセット（期限を過ぎた完了エントリを削除し次回期限を更新）
   doneTasks = doneTasks.filter(function(e) {
     if (!e.isRepeat) return true;
     if (e.deadline && e.deadline < today) {
       var orig = tasks.find(function(t){ return t.id === e.taskId; });
-      if (orig) orig._nextDeadline = calcNext(orig, e.deadline);
+      if (orig) {
+        orig._completedUntil = e.deadline;
+        orig._nextDeadline   = calcNext(orig, e.deadline);
+      }
       return false;
     }
     return true;
   });
 
-  var afterNextDeadlines = tasks.map(function(t){ return t._nextDeadline||''; }).join(',');
-  return doneTasks.length !== prevDone || prevNextDeadlines !== afterNextDeadlines;
+  var afterCompletedUntil = tasks.map(function(t){ return t._completedUntil||''; }).join(',');
+  return doneTasks.length !== prevDoneLen || prevCompletedUntil !== afterCompletedUntil;
 }
 
 // ================================================================
@@ -645,10 +654,18 @@ function calcNext(t, base) {
   return null;
 }
 
+// _completedUntilがある場合はそれを基準に次回期限を計算
 function getDeadline(t) {
   if(t.dlType==='date') return t.dlDate||null;
-  if(t.dlType==='days'){ var d=new Date(); d.setDate(d.getDate()+(t.dlDays||0)); return toDateStr(d); }
-  if(!t._nextDeadline){ var y=toDateStr(new Date(new Date()-86400000)); t._nextDeadline=calcNext(t,y); }
+  if(t.dlType==='days'){
+    var d=new Date(); d.setDate(d.getDate()+(t.dlDays||0)); return toDateStr(d);
+  }
+  if(!t._nextDeadline){
+    var base = t._completedUntil
+      ? t._completedUntil
+      : toDateStr(new Date(new Date()-86400000));
+    t._nextDeadline = calcNext(t, base);
+  }
   return t._nextDeadline;
 }
 
@@ -785,6 +802,8 @@ function saveTask() {
     ['dlDate','dlDays','dlWeekday','dlMonthday','dlInterval','dlStart','dlWeeks'].forEach(function(k){
       if(!(k in dlData)) delete base[k];
     });
+    // 編集時は_completedUntilをリセット
+    delete base._completedUntil;
     base._nextDeadline=isRepeat(base)?calcNext(base,yesterday):null;
     tasks[idx]=base;
   }else{
@@ -816,7 +835,7 @@ window.completeTask = function(id) {
   var t=tasks.find(function(x){return x.id===id;}); if(!t) return;
   var dl=getDeadline(t);
 
-  // _origから_nextDeadlineを除いて保存（undefinedにせずプロパティ自体を含めない）
+  // _origから_nextDeadlineを除いて保存
   var origCopy = {};
   Object.keys(t).forEach(function(k){
     if(k !== '_nextDeadline' && t[k] !== undefined) origCopy[k] = t[k];
@@ -836,7 +855,9 @@ window.completeTask = function(id) {
   }));
 
   if(isRepeat(t)){
-    t._nextDeadline=calcNext(t, dl||todayStr());
+    var nextDl = calcNext(t, dl || todayStr());
+    t._completedUntil = dl || todayStr(); // 完了済み基準日をDBに保存
+    t._nextDeadline   = nextDl;
   }else{
     tasks=tasks.filter(function(x){return x.id!==id;});
     settings.manualOrder=settings.manualOrder.filter(function(i){return i!==id;});
@@ -850,8 +871,10 @@ window.uncomplete = function(doneId) {
   if(e.isRepeat){
     var orig=tasks.find(function(t){return t.id===e.taskId;});
     if(orig&&e.deadline){
+      // 完了前の状態に_completedUntilを戻す
       var db=toDateStr(new Date(parseDate(e.deadline)-86400000));
-      orig._nextDeadline=calcNext(orig,db);
+      orig._completedUntil = db;
+      orig._nextDeadline   = calcNext(orig, db);
     }
   }else{
     var r=e._orig
@@ -1189,7 +1212,10 @@ window.doImport = function() {
   if(!Array.isArray(settings.manualOrder)) settings.manualOrder=[];
   var y=toDateStr(new Date(new Date()-86400000));
   tasks.forEach(function(t){
-    if(isRepeat(t)) t._nextDeadline=calcNext(t,y);
+    if(isRepeat(t)){
+      var base=t._completedUntil?t._completedUntil:y;
+      t._nextDeadline=calcNext(t,base);
+    }
     if(!settings.manualOrder.includes(t.id)) settings.manualOrder.push(t.id);
   });
   save(); renderAll(); closeModal('ieModal'); alert('インポート完了');
@@ -1233,7 +1259,7 @@ function renderAll() {
 
 // 1時間毎に自動削除・リセットチェック
 setInterval(function(){
-  var changed = checkAutoDelAndReset();
+  var changed=checkAutoDelAndReset();
   if(changed){ writeToFirebase(); renderAll(); }
 }, 3600000);
 
