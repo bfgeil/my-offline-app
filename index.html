@@ -641,7 +641,7 @@ function nextInterval(base, startStr, interval) {
   var start=parseDate(startStr), b=parseDate(base);
   var diff=Math.ceil((b-start)/86400000);
   if(diff<0) return toDateStr(start);
-  var rem=diff%interval, add=rem===0?0:interval-rem;
+  var rem=diff%interval, add=rem===0?interval:interval-rem; // ← 0 を interval に修正
   var next=new Date(b); next.setDate(next.getDate()+add);
   return toDateStr(next);
 }
