@@ -435,13 +435,7 @@ function startSync() {
     // _nextDeadlineをメモリ上で復元し、旧形式の「〇日後」タスクを実期限日に移行
     var migratedDaysDeadline = false;
     tasks.forEach(function(t) {
-      if (t.dlType === 'days' && !t.dlDate) {
-        var baseDate = t.createdAt ? new Date(t.createdAt) : new Date();
-        baseDate.setHours(0, 0, 0, 0);
-        baseDate.setDate(baseDate.getDate() + (t.dlDays || 0));
-        t.dlDate = toDateStr(baseDate);
-        migratedDaysDeadline = true;
-      }
+      if (migrateDaysDeadline(t)) migratedDaysDeadline = true;
       if (isRepeat(t)) {
         var base = t._completedUntil
           ? t._completedUntil
@@ -619,6 +613,16 @@ function getDefaultMasters() {
 
 function getMasterByTitle(title) {
   return masters.find(function(m){ return m.name===title; }) || {name:title,deadlineTime:'00:00',autoDeleteDays:0};
+}
+
+// 旧形式の「〇日後」タスクに実期限日を補完する
+function migrateDaysDeadline(t) {
+  if (t.dlType !== 'days' || t.dlDate) return false;
+  var baseDate = t.createdAt ? new Date(t.createdAt) : new Date();
+  baseDate.setHours(0, 0, 0, 0);
+  baseDate.setDate(baseDate.getDate() + (t.dlDays || 0));
+  t.dlDate = toDateStr(baseDate);
+  return true;
 }
 
 // ================================================================
@@ -1221,6 +1225,7 @@ window.doImport = function() {
   if(!Array.isArray(settings.manualOrder)) settings.manualOrder=[];
   var y=toDateStr(new Date(new Date()-86400000));
   tasks.forEach(function(t){
+    migrateDaysDeadline(t);
     if(isRepeat(t)){
       var base=t._completedUntil?t._completedUntil:y;
       t._nextDeadline=calcNext(t,base);
@@ -1266,11 +1271,12 @@ function renderAll() {
   if(currentTab==='cal')  renderCalendar();
 }
 
-// 1時間毎に自動削除・リセットチェック
+// 1分毎に表示を更新し、データに変化がある場合だけFirebaseへ保存
 setInterval(function(){
   var changed=checkAutoDelAndReset();
-  if(changed){ writeToFirebase(); renderAll(); }
-}, 3600000);
+  if(changed) writeToFirebase();
+  renderAll();
+}, 60000);
 
 </script>
 </body>
