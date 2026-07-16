@@ -949,9 +949,9 @@ function taskCardHTML(t) {
     +'<button class="btn btn-secondary btn-sm" onclick="moveTask(\''+id+'\',1)">↓</button>':'';
   return '<div class="tcard '+sCls+'">'
     +'<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:4px">'
-    +'<div class="ttitle">'+h(t.title)+'</div>'
+    +'<div class="ttitle">'+h(t.event||t.title)+'</div>'
     +'<span class="badge '+(rep?'badge-r':'badge-o')+'" style="white-space:nowrap">'+(rep?'🔁 繰り返し':'📌 1回')+'</span></div>'
-    +(t.event?'<div class="tevent">📌 '+h(t.event)+'</div>':'')
+    +(t.event?'<div class="tevent">🎮 '+h(t.title)+'</div>':'')
     +'<div class="tmeta"><span class="dbadge '+bCls+'">⏰ '+dlFmt+'</span>'
     +(bTxt?'<span class="dbadge '+bCls+'">'+bTxt+'</span>':'')
     +'<span style="color:#aaa;font-size:11px">'+h(dlLabel(t))+'</span></div>'
@@ -990,9 +990,9 @@ function renderDone() {
     var autoDelTxt=autoDelDays?'（'+autoDelDays+'日後に自動削除）':'';
     return '<div class="tcard done">'
       +'<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:4px">'
-      +'<div class="ttitle" style="text-decoration:line-through;color:#aaa">'+h(c.title)+'</div>'
+      +'<div class="ttitle" style="text-decoration:line-through;color:#aaa">'+h(c.event||c.title)+'</div>'
       +'<span class="badge '+(c.isRepeat?'badge-r':'badge-o')+'" style="white-space:nowrap">'+(c.isRepeat?'🔁 繰り返し':'📌 1回')+'</span></div>'
-      +(c.event?'<div class="tevent">📌 '+h(c.event)+'</div>':'')
+      +(c.event?'<div class="tevent">🎮 '+h(c.title)+'</div>':'')
       +'<div class="tmeta">'+(c.deadline?'<span class="dbadge">⏰ 期限: '+fmtDate(c.deadline)+'</span>':'')
       +'<span style="color:#aaa">完了: '+new Date(c.completedAt).toLocaleDateString('ja-JP')+autoDelTxt+'</span></div>'
       +(c.memo?'<div style="font-size:12px;color:#aaa;margin-bottom:6px">💬 '+h(c.memo)+'</div>':'')
