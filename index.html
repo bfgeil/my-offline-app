@@ -988,6 +988,9 @@ function renderTasks() {
   el.innerHTML=list.map(taskCardHTML).join('');
 }
 
+// モジュール内の描画関数をフィルターのHTMLイベントから呼び出せるようにする
+window.renderTasks = renderTasks;
+
 function taskCardHTML(t) {
   var dl=getDeadline(t), master=getMasterByTitle(t.title), dlTime=master.deadlineTime||'00:00';
   var diffMs=dl?deadlineDiff(dl,dlTime):null, rep=isRepeat(t);
@@ -1058,6 +1061,8 @@ function renderDone() {
       +'</div></div>';
   }).join('');
 }
+
+window.renderDone = renderDone;
 
 // ================================================================
 // カレンダー
