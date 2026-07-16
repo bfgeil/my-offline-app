@@ -432,9 +432,16 @@ function startSync() {
     settings  = data.settings || { sortKey:'deadline', manualOrder:[] };
     if (!Array.isArray(settings.manualOrder)) settings.manualOrder = [];
 
-    // _nextDeadlineをメモリ上で復元
-    // _completedUntil がある場合はそれを基準に計算
+    // _nextDeadlineをメモリ上で復元し、旧形式の「〇日後」タスクを実期限日に移行
+    var migratedDaysDeadline = false;
     tasks.forEach(function(t) {
+      if (t.dlType === 'days' && !t.dlDate) {
+        var baseDate = t.createdAt ? new Date(t.createdAt) : new Date();
+        baseDate.setHours(0, 0, 0, 0);
+        baseDate.setDate(baseDate.getDate() + (t.dlDays || 0));
+        t.dlDate = toDateStr(baseDate);
+        migratedDaysDeadline = true;
+      }
       if (isRepeat(t)) {
         var base = t._completedUntil
           ? t._completedUntil
@@ -443,8 +450,8 @@ function startSync() {
       }
     });
 
-    // 自動削除・繰り返しリセットで変化があればFirebaseに書き戻す
-    var needSave = checkAutoDelAndReset();
+    // 自動削除・繰り返しリセット・旧形式の移行で変化があればFirebaseに書き戻す
+    var needSave = migratedDaysDeadline || checkAutoDelAndReset();
     if (needSave) {
       writeToFirebase();
     } else {
@@ -657,9 +664,7 @@ function calcNext(t, base) {
 // _completedUntilがある場合はそれを基準に次回期限を計算
 function getDeadline(t) {
   if(t.dlType==='date') return t.dlDate||null;
-  if(t.dlType==='days'){
-    var d=new Date(); d.setDate(d.getDate()+(t.dlDays||0)); return toDateStr(d);
-  }
+  if(t.dlType==='days') return t.dlDate||null;
   if(!t._nextDeadline){
     var base = t._completedUntil
       ? t._completedUntil
@@ -777,6 +782,10 @@ function saveTask() {
     var v=parseInt(document.getElementById('dl_days').value,10);
     if(isNaN(v)||v<0){alert('日数を正しく入力してください');return;}
     dlData.dlDays=v;
+    var deadlineDate=new Date();
+    deadlineDate.setHours(0,0,0,0);
+    deadlineDate.setDate(deadlineDate.getDate()+v);
+    dlData.dlDate=toDateStr(deadlineDate);
   }else if(dlType==='weekday'){
     dlData.dlWeekday=parseInt(document.getElementById('dl_weekday').value,10);
   }else if(dlType==='monthday'){
