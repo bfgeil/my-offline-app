@@ -326,7 +326,7 @@ import { initializeApp }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut as fbSignOut, onAuthStateChanged }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
-import { getDatabase, ref, set, onValue, off }
+import { getDatabase, ref, runTransaction, onValue, off }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js';
 
 // ================================================================
@@ -350,6 +350,7 @@ var currentUser    = null;
 var dbListenerRef  = null;
 var saveTimer      = null;
 var myWriteVersion = null;
+var lastSyncedData = { tasks:[], done:[], masters:[], settings:{} };
 
 // ================================================================
 // アプリ状態
@@ -414,6 +415,7 @@ function startSync() {
       doneTasks = [];
       masters   = getDefaultMasters();
       settings  = { sortKey:'deadline', manualOrder:[] };
+      lastSyncedData = makeSyncSnapshot();
       renderAll();
       writeToFirebase();
       return;
@@ -431,6 +433,7 @@ function startSync() {
     masters   = Array.isArray(data.masters) ? data.masters : getDefaultMasters();
     settings  = data.settings || { sortKey:'deadline', manualOrder:[] };
     if (!Array.isArray(settings.manualOrder)) settings.manualOrder = [];
+    lastSyncedData = makeSyncSnapshot();
 
     // _nextDeadlineをメモリ上で復元し、旧形式の「〇日後」タスクを実期限日に移行
     var migratedDaysDeadline = false;
@@ -486,29 +489,77 @@ function stripUndefined(obj) {
   return obj;
 }
 
+function cleanTaskForSync(t) {
+  var c = Object.assign({}, t);
+  delete c._nextDeadline;
+  return c;
+}
+
+function cloneSyncValue(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function sameSyncValue(a, b) {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+function makeSyncSnapshot() {
+  return {
+    tasks: cloneSyncValue(tasks.map(cleanTaskForSync)),
+    done: cloneSyncValue(doneTasks),
+    masters: cloneSyncValue(masters),
+    settings: cloneSyncValue(settings),
+  };
+}
+
+function mapByKey(list, key) {
+  var map = {};
+  (list || []).forEach(function(item) {
+    if (item && item[key] != null) map[item[key]] = item;
+  });
+  return map;
+}
+
+// 基準データとの差分だけを最新のリモートデータへ反映する
+function mergeCollection(remoteList, localList, baseList, key) {
+  var result = mapByKey(remoteList, key);
+  var base = mapByKey(baseList, key);
+  var local = mapByKey(localList, key);
+
+  Object.keys(base).forEach(function(id) {
+    if (!local[id]) delete result[id];
+  });
+  Object.keys(local).forEach(function(id) {
+    if (!base[id] || !sameSyncValue(local[id], base[id])) result[id] = local[id];
+  });
+  return Object.keys(result).map(function(id) { return result[id]; });
+}
+
 function writeToFirebase() {
   if (!currentUser) return;
 
   var ver = genId();
   myWriteVersion = ver;
+  var localData = makeSyncSnapshot();
+  var baseData = lastSyncedData || { tasks:[], done:[], masters:[], settings:{} };
 
-  // _nextDeadlineのみ除去。_completedUntilはDBに保存する
-  var cleanTasks = tasks.map(function(t) {
-    var c = Object.assign({}, t);
-    delete c._nextDeadline;
-    return c;
-  });
+  runTransaction(getUserRef(), function(remoteData) {
+    if (!remoteData) {
+      return stripUndefined({
+        tasks: localData.tasks, done: localData.done, masters: localData.masters,
+        settings: localData.settings, updatedAt: new Date().toISOString(), _ver: ver,
+      });
+    }
 
-  var data = stripUndefined({
-    tasks:     cleanTasks,
-    done:      doneTasks,
-    masters:   masters,
-    settings:  settings,
-    updatedAt: new Date().toISOString(),
-    _ver:      ver,
-  });
-
-  set(getUserRef(), data)
+    var merged = Object.assign({}, remoteData);
+    merged.tasks = mergeCollection(remoteData.tasks, localData.tasks, baseData.tasks, 'id');
+    merged.done = mergeCollection(remoteData.done, localData.done, baseData.done, 'id');
+    merged.masters = mergeCollection(remoteData.masters, localData.masters, baseData.masters, 'name');
+    if (!sameSyncValue(localData.settings, baseData.settings)) merged.settings = localData.settings;
+    merged.updatedAt = new Date().toISOString();
+    merged._ver = ver;
+    return stripUndefined(merged);
+  })
     .then(function() { setSyncStatus('ok'); })
     .catch(function(e) {
       console.error('write error:', e);
@@ -544,7 +595,8 @@ function checkAutoDelAndReset() {
   // 繰り返しリセット（期限を過ぎた完了エントリを削除し次回期限を更新）
   doneTasks = doneTasks.filter(function(e) {
     if (!e.isRepeat) return true;
-    if (e.deadline && e.deadline < today) {
+    var master = getMasterByTitle(e.title);
+    if (e.deadline && deadlineDiff(e.deadline, master.deadlineTime) < 0) {
       var orig = tasks.find(function(t){ return t.id === e.taskId; });
       if (orig) {
         orig._completedUntil = e.deadline;
@@ -1050,7 +1102,6 @@ function renderCalendar() {
   }
 
   document.getElementById('calGrid').innerHTML=html;
-  document.getElementById('calDetail').style.display='none';
 }
 
 function getTasksForDate(ds) {
@@ -1061,6 +1112,7 @@ function getTasksForDate(ds) {
 }
 
 window.calMove = function(dir) {
+  document.getElementById('calDetail').style.display='none';
   calMonth+=dir;
   if(calMonth>11){calMonth=0;calYear++;}
   if(calMonth<0) {calMonth=11;calYear--;}
